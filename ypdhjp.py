@@ -151,7 +151,7 @@ class YP:
 
 
 if __name__ == "__main__":
-    env_name = 'ydypdh'
+    env_name = 'ydyp'
     token = os.getenv(env_name)
     if not token:
         print(f'⛔️未获取到ck变量：请检查变量 {env_name} 是否填写')
