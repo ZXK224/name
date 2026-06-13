@@ -1,3 +1,4 @@
+# name: 云盘兑换ID版
 # ydyp = Authorization#手机号#商品ID
 # 商品ID不知道把get_shop()函数前的注释去掉即可
 # cron * * 0,12,16 * * * *
