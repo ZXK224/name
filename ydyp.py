@@ -1,3 +1,4 @@
+# name: 妖火移动云盘
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -397,7 +398,7 @@ class YP:
             self.note_token = None
             self.note_auth = None
             self.auth_token = None
-            self.click_num = 15
+            self.click_num = 99
             self.draw = 1
             self.client_version = '12.5.4'
             self.market_base_url = 'https://m.mcloud.139.com'
