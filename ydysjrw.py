@@ -1,3 +1,4 @@
+# name: 移动云手机任务
 """
 ✅ 移动云手机APP
 ✅ 账号变量ChinaMobileCloudPhone = Token 或 手机号#Token 或 refreshToken 或 Token#refreshToken 或 手机号#Token#refreshToken 或 手机号#密码
