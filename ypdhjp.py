@@ -1,5 +1,5 @@
 # 脚本名称: [中国移动云盘]
-# 功能描述: 云盘兑换奖品
+# name:  云盘兑换奖品
 # 使用说明:
 #   - [抓包 Cookie：任意Authorization]
 #   - [注意事项: 简易方法，开抓包进App，搜refresh，找到authTokenRefresh.do ，请求头中的Authorization，响应体<token> xxx</token> 中xxx值（新版加密抓这个）]
