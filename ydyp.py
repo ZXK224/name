@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-移动云盘自动签到 v5.0.5
+移动云盘自动签到 v5.0.6
 
 包含以下功能:
 1. 每日自动签到 (签到/抽奖/摇一摇/新版云朵领取)
@@ -11,6 +11,10 @@
 
 更新说明:
 
+### 20260531
+v5.0.6:
+- 修复云朵中心任务列表（重构为 POST JSON 模式）。
+
 ### 20260503
 v5.0.5:
 - 修复分享文件任务流程。
@@ -19,8 +23,8 @@ v5.0.5:
 
 ### 20260425
 v5.0.4:
-- 整合 Authorization 自动刷新、本地 token 缓存与过期前续期。
-- 新增账号级 deviceId/token 缓存，支持手动补填 deviceId 并复用。
+- 整合 Authorization 自动刷新。
+- 新增账号级 deviceId/token 缓存。
 - 优化 JWT 失败重试、设备信息与启动提示。
 
 ### 20260420
@@ -58,7 +62,7 @@ pip3 install requests pycryptodome
 
 Author: YaoHuo8648
 Email: zheyizzf@188.com
-Update: 2026.05.03
+Update: 2026.05.31
 """
 
 import base64
@@ -83,7 +87,7 @@ except ImportError:
     AES = None
     pad = None
 
-SCRIPT_VERSION = '5.0.5'
+SCRIPT_VERSION = '5.0.6'
 
 TOKEN_STORAGE_FILENAME = 'ydyp_token_storage.json'
 DEVICE_ID_STORAGE_FILENAME = 'ydyp_device_ids.json'  # 简易 deviceId 存储：手机号 -> deviceId
@@ -673,7 +677,12 @@ class YP:
 
         request_headers = dict(headers or {})
         request_cookies = dict(cookies or {})
-        request_args = {'json': data} if isinstance(data, dict) else {'data': data}
+        if isinstance(data, dict):
+            request_args = {'json': data}
+        elif isinstance(data, str):
+            request_args = {'data': data.encode('utf-8')}
+        else:
+            request_args = {'data': data}
 
         for attempt in range(retries):
             try:
@@ -1291,11 +1300,11 @@ class YP:
         ]
 
     def query_cloud_task(self, task_id, group='time'):
-        return_data = self.request_market_json(f'{self.market_base_url}/market/signin/task/taskListV2', params = {
+        return_data = self.request_market_json(f'{self.market_base_url}/market/signin/task/taskListV2', data = {
             'marketname': 'sign_in_3',
             'clientVersion': self.client_version,
             'group': group,
-        })
+        }, method = 'POST')
         if not return_data or return_data.get('code') != 0:
             return None
         for task in return_data.get('result', {}).get(group, []):
@@ -1387,11 +1396,11 @@ class YP:
 
     def get_cloud_tasklist_v2(self):
         for group, title in self.get_cloud_task_groups():
-            return_data = self.request_market_json(f'{self.market_base_url}/market/signin/task/taskListV2', params = {
+            return_data = self.request_market_json(f'{self.market_base_url}/market/signin/task/taskListV2', data = {
                 'marketname': 'sign_in_3',
                 'clientVersion': self.client_version,
                 'group': group,
-            })
+            }, method = 'POST')
             if not return_data:
                 self.log(f'获取任务列表失败: {group}')
                 continue
@@ -1411,7 +1420,7 @@ class YP:
         task_name = self.strip_task_name(task)
         task_status = task.get('state', '')
         if task_status == 'FINISH':
-            print(f'-已完成: {task_name}')
+            self.log(f'-已完成: {task_name}')
             return
         if group == 'day' and task_id == 106:
             self.log(f'-去完成: {task_name}')
@@ -1702,7 +1711,7 @@ class YP:
                             task_status = month.get('state', '')
 
                             if task_status == 'FINISH':
-                                print(f'-已完成: {task_name}')
+                                self.log(f'-已完成: {task_name}')
                                 continue
                             self.log(f'-去完成: {task_name}')
                             self.do_task(task_id, task_type = 'month', app_type = 'cloud_app')
@@ -1717,7 +1726,7 @@ class YP:
                             task_status = day.get('state', '')
 
                             if task_status == 'FINISH':
-                                print(f'-已完成: {task_name}')
+                                self.log(f'-已完成: {task_name}')
                                 continue
                             self.log(f'-去完成: {task_name}')
                             self.do_task(task_id, task_type = 'day', app_type = 'cloud_app')
@@ -1732,7 +1741,7 @@ class YP:
                                 continue
 
                             if task_status == 'FINISH':
-                                print(f'-已完成: {task_name}')
+                                self.log(f'-已完成: {task_name}')
                                 continue
                             self.log(f'-去完成: {task_name}')
                             self.do_task(task_id, task_type = 'month', app_type = 'email_app')
