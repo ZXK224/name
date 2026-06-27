@@ -1,8 +1,7 @@
-# name: 妖火移动云盘
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-移动云盘自动签到 v5.0.6
+移动云盘自动签到 v5.0.7
 
 包含以下功能:
 1. 每日自动签到 (签到/抽奖/摇一摇/新版云朵领取)
@@ -11,6 +10,11 @@
 4. 临时文件智能清理与详细日志推送
 
 更新说明:
+
+### 20260614
+v5.0.7:
+- 新增红包派对任务链：签到、浏览、云机使用、安装应用、趣味答题、余额奖励日志。
+- 30GB定向流量保持手动跳过，补充答题答案与未知题重取。
 
 ### 20260531
 v5.0.6:
@@ -27,13 +31,6 @@ v5.0.4:
 - 整合 Authorization 自动刷新。
 - 新增账号级 deviceId/token 缓存。
 - 优化 JWT 失败重试、设备信息与启动提示。
-
-### 20260420
-v5.0.3:
-- 适配新版签到链路，修复旧接口报错。
-- 接入云朵中心新版任务。
-- 新增 AI 相机、上传清理、分享文件每日自动化与月上传补传能力。
-- 优化启动与任务日志输出。
 
 配置说明:
 变量名: ydyp
@@ -63,7 +60,7 @@ pip3 install requests pycryptodome
 
 Author: YaoHuo8648
 Email: zheyizzf@188.com
-Update: 2026.05.31
+Update: 2026.06.14
 """
 
 import base64
@@ -88,7 +85,7 @@ except ImportError:
     AES = None
     pad = None
 
-SCRIPT_VERSION = '5.0.6'
+SCRIPT_VERSION = '5.0.7'
 
 TOKEN_STORAGE_FILENAME = 'ydyp_token_storage.json'
 DEVICE_ID_STORAGE_FILENAME = 'ydyp_device_ids.json'  # 简易 deviceId 存储：手机号 -> deviceId
@@ -96,6 +93,7 @@ DEVICE_ID_STORAGE_FILENAME = 'ydyp_device_ids.json'  # 简易 deviceId 存储：
 # ⭐ 统一设备信息：iPhone 16 Pro + iOS 18_7 + 版本 12.5.4（抓包真实值）
 ua = ''
 market_ua = ''
+DEFAULT_MARKET_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
 cloud_file_dummy_content = b'0'
 cloud_file_dummy_hash = hashlib.sha256(cloud_file_dummy_content).hexdigest()
 TOKEN_VALID_TIME = 21600000
@@ -105,6 +103,35 @@ REFRESH_TOKEN_AES_KEY = 'c7lXOigXahPnTViq'
 AI_TOOL_ACCOUNT_AES_KEY = 'xuL97!x7GGxG%8V4'
 AI_TOOL_ACCOUNT_AES_IV = '5OuCxk4XNu0NA*%x'
 TOKEN_EXPIRE_SECONDS_FALLBACK = 2592000
+RED_PACKET_SOURCE_ID = '001216'
+RED_PACKET_VERSION = 'SYS_CONFIG_Y'
+RED_PACKET_BASE_URL = 'https://cpactiv.buy.139.com/cloudphone-market'
+RED_PACKET_PAGE_URL = 'https://cpactiv.buy.139.com/#/redEnvelopeParty/home?channelSrc=red-cmccapp'
+RED_PACKET_APP_ID = '12345681'
+RED_PACKET_SIGN_KEY = 'e10adc3949ba59abbe56e057f20f883e'
+RED_PACKET_CHANNEL_SRC = 'red-cmccapp'
+RED_PACKET_BROWSE_TASKS = {'NOVICE_2', 'NOVICE_3', 'MONTHLY_1'}
+RED_PACKET_DIRECT_TASKS = {'MONTHLY_4', 'MONTHLY_5'}
+RED_PACKET_KNOWN_ANSWERS = {
+    '如何查看并更新移动云手机客户端最新版本？': '进入“我的”-点击“关于云手机”-点击“检查新版本”',
+    '移动云手机可领取定向流量，每月赠送的定向流量是（  ）。': '30GB',
+    '移动云手机端内订购的专业版分辨率已升级到1080P，该说法是否正确？': '正确',
+    '移动云手机支持视频录制，该说法是否正确？': '正确',
+    '云手机支持通过手机、平板、电脑等多种终端设备登录使用，该说法是否正确？': '正确',
+    '使用中国移动号码登录移动云手机，是否支持手机号一键登录？': '支持',
+    '只有中国移动运营商号码能使用移动云手机？': '不正确',
+    '移动云手机是否需要充电使用？': '不需要',
+    '移动云手机支持截图，该说法是否正确？': '正确',
+    '移动云手机AI灵犀助手已接入DeepSeek，是否正确？': '正确',
+    '移动云手机内支持画面清晰度切换，该说法是否正确？': '正确',
+    '移动云手机支持连接蓝牙使用吗？': '不支持',
+    '在云手机内安装游戏应用是否占本地手机存储空间？': '否，不占本地空间',
+    '如何更换云机内的桌面主题或壁纸？': '云机内-【设置】-壁纸/个性主题',
+    '如何将云手机里的应用添加至本地手机桌面？': '云手机桌面-长按应用-发送图标到本地',
+}
+RED_PACKET_MANUAL_TASKS = {
+    'NOVICE_1': '需跳转领取定向流量',
+}
 
 err_accounts = ''  # 异常账号
 all_logs = ''      # 所有用户的详细运行日志 (原 err_message)
@@ -141,6 +168,38 @@ def generate_uuid():
 # 真实抓包 deviceId（base64 格式，iOS iPhone 16 Pro + iOS 18_7）
 REAL_DEVICE_ID = ''
 
+DEVICE_PROFILE_URL = 'https://slw.h5cmpassport.com:9090/deviceprofile/v4'
+DEVICE_PROFILE_PAYLOAD = {
+    'appId': 'default',
+    'organization': 'FXlyfmWg2AzwbrxDKSv5',
+    'ep': 'WydTnuOv+Rtg/Qj8Q4vnhSXJN4UHQPF2jjs+LVJkD3u8HXglndPAndOgrlmg2Q8q0FUQRZpN0N7e61ebhjw/Gba22ydgOMbBRfbSmKSnNWaACA+MzAX5Q4dd980zPqelMxGVzB3jkr1wGE6cVQkwWFq/xbdnkK/Sh6xrPDjYvho=',
+    'data': '5b5f2054405d6155102ed35a134758f768e60b7c1ac7af66acb16871d78a099cbcbabb3fb5ebeefe6cbae063407fca585a343ce5bef4f4e4588df42ca8ae8a6504b3646066fd7dc46465a83d510fbb477ba72f7375db7cbcba9b712ec88d85fc8d410536b96ca644c8ca3afbca00e0084ad9709b93b86923bf1fadef48be3e888b52dd2775c180b5b8e7bae139fadf2944f73010be9704daa6f4cf596b4adccff7b5de84e45698b781d963b69fa8ec28e43083512ab5749ea05c4efce14945d647c9f33d6296750ff2ba59bff5b7fcf698ffa146b7fe7e5c405b13100818b53fd034d05edea63c8365d9113bc7d4c0652892fcae75cdb491ae0215fbd822b1877b209fc8c68710badc6915080b7b994fa4b86a8f7b37e929cecbd1c590ad7382beb3ae8b9cc56ed84e927cbe41d8b4b15bbeecc69f5463d402cc2732fe5b76ec201632afbc16228531a65c1810482e4eb48157bc8b23cd363c6809a3fd629e3520514c06a720616e1788fe10203f9ebfa1de24c66213e334e3a3b3ff8a8866b7aefd9b4f2c88d216f45b551d693433940569092f0c7aca25019dc2003e8eab1967ac1dc32b0912701b0abc17e0509bada0cf0fcbe3c5fb64f0d5c6f02303b1540829a301673da89f7460d00190bda07c9b82c263277066f8e7e91c4916f247f9d9fe295a46d16cd087cee865d9e50edeb8e88842c560b09f853b5f89d2d0c4ed160f5bc293f7c69ece9e2d64d7217857fd2d64d57bea1ccea1b52896bb9aaf2ec3baa2421bce8d011813a1b26f0acb3a3cf594298bd725f8da17717b965f85e46a52c758ed1e95218e06f7e96a9f13e4855a0bb4bcf8b5f571887ec58c7438e99f06562414bcb274038fe6ffc1b8991021e35866cef5010184e3fbbd49c19d6020315731e9e57b7cd6a1e8b33c97746a782f9b4a26696966f40324f1ff76d3d1d24bf544230438dc32ab26d6dc107adf9feac34ffbbaa8814cec674e9469de54a714273a47f4fd06561e611f6741a4f0362a3b8821b0c69a3a04ced876fbf1b5fdc58097b1d7087aa2c0df556f8a06288db8c306cda4525d91c0452a0d2747982bd70b31c6905d4e483e8519d4d605af776be2a81224e3a6cc0b6ec49ad2cdb434bd85b5079ff86f68bf5ebb41336f30ec84fe19fabbd10a4422a274a3749d70c6b39cf7cdc1eb0cb228abee2475d16c57635a332628727b76a1fac0b26bf7bbdf4c5b956261919e7d2bd67733656855503670d48fe3680d04b65aac48d99bd47aedb6091c0a6df53be5bd662c1130feb6b469578cb146e1ae004471641fbc028cc06b80cfcdc50f8231e58b4126ab750b1d02eb8ac417b53a5ae50846db9aeadf4f1c98e33228db5143cb3d928217b769eaf32d181320a0bee4805334c28a03995d925b52fda358d19c52e3838c243b8c7d3256337943705c1311526c290fad975b7d7ade4bbc9292dbd7b9c0314715ef3c785a720e674dc23538af333cc6ff541aea70086287a8b4407c66ce673c9a47268de014c876a3a6a577d501285f6f489e2519f51bf4feafe307333a9e077f613527bbe1ce632127df654588410f713bb4a61e050cae618e98cc9adbb77d9df95733449c06e62094f3cdaf2ba39f94223ed7ca63ea4dec37d7283bdd0d2015511e7e57212073a540b308b10d7f85de73865fc2ffbf05a85ae25a7b52f0292236ee75f738add8144c7b2767a2100451363a47c12dfb674bd3ee000fa41565e9fbc60440a629160a2d2a99ec23dccc6815f644a2dd1eb059ab8593d9b04b1b81f5e427570cfc06eba8456b68159e6886843bcf4374b02de2e5be8d900882f78a71c2f3819d2e9c45e64b5d006c7a5914d1482f01ed5c0cfb44c3543656e96b5d91b39cd667af4dc60f44752da28eda57d2453d26a099529a2a38c9b9b2f0a73a69445030321b0a87287f6469f4d585739cded2e79c66df9c949eb7b2b8a8ff78e80a88ca494f3410195e021ec5009f8cd29781f09d58e6f866102072f1cee202c6ce21d72795b47a0ab8464fa54836c36a28ff73828e7a39dd1203d5a051ac4cd22b4f8c9f1e4e9c42f0c85b101b1eb495c0a767697dccab920489fae867ff38c5f917aec269d0ac9a1d6005407db762349d77e990581e19b1912fc975a9cdd2',
+    'os': 'web',
+    'encode': 5,
+    'compress': 2,
+}
+
+
+def fetch_device_id():
+    try:
+        resp = requests.post(
+            DEVICE_PROFILE_URL,
+            json=DEVICE_PROFILE_PAYLOAD,
+            headers={
+                'Content-Type': 'application/json;charset=utf-8',
+                'Origin': 'https://m.mcloud.139.com',
+                'Referer': 'https://m.mcloud.139.com/',
+            },
+            timeout=15,
+        )
+        data = resp.json()
+        raw_id = data.get('detail', {}).get('deviceId', '')
+        if raw_id:
+            return f'B{raw_id}'
+    except Exception as e:
+        print(f'  获取设备指纹失败: {e}')
+    return ''
+
 def generate_device_id():
     if REAL_DEVICE_ID:
         return REAL_DEVICE_ID
@@ -157,6 +216,34 @@ def generate_device_id():
 
 def get_env_device_id():
     return (os.getenv('ydyp_device_id') or os.getenv('YDYP_DEVICE_ID') or '').strip()
+
+
+def env_flag(name):
+    return (os.getenv(name, '') or '').strip().lower() in ('1', 'true', 'yes', 'on', 'debug')
+
+
+def get_market_user_agent():
+    return (os.getenv('YDYP_MARKET_UA') or market_ua or DEFAULT_MARKET_UA).strip()
+
+
+def get_market_source_id():
+    return (os.getenv('YDYP_MARKET_SOURCE_ID') or '1097').strip() or '1097'
+
+
+def normalize_market_device_input(device_id):
+    """兼容请求头 deviceId、.thumbcache_* cookie 原值和 URL 编码值。"""
+    raw = (device_id or '').strip().strip('"').strip("'")
+    if not raw:
+        return '', ''
+    match = re.search(r'(?:^|;\s*)\.thumbcache_[^=;]*=([^;]+)', raw)
+    if match:
+        raw = match.group(1).strip()
+    elif raw.lower().startswith('deviceid='):
+        raw = raw.split('=', 1)[1].strip()
+    raw = raw.strip().strip('"').strip("'")
+    header_value = unquote(raw)
+    cookie_value = raw if raw != header_value else (header_value[1:] if header_value.startswith('B') else header_value)
+    return header_value, cookie_value
 
 
 def build_x_device_info(device_id, net_type='wifi', terminal_type='8',
@@ -282,7 +369,8 @@ def save_device_id(device_id, account):
     storage_path = get_device_id_storage_path()
     data = load_device_id_storage()
     account_data = data.get(account, {})
-    account_data['deviceId'] = device_id
+    normalized_device_id, _ = normalize_market_device_input(device_id)
+    account_data['deviceId'] = normalized_device_id or device_id
     data[account] = account_data
     try:
         with open(storage_path, 'w', encoding='utf-8') as f:
@@ -398,19 +486,22 @@ class YP:
             self.note_token = None
             self.note_auth = None
             self.auth_token = None
-            self.click_num = 99
+            self.click_num = 15
             self.draw = 1
             self.client_version = '12.5.4'
             self.market_base_url = 'https://m.mcloud.139.com'
-            self.market_source_id = '1097'
+            self.market_source_id = get_market_source_id()
             self.sso_token = None
             self.user_domain_id = ''
             self.market_device_id = ''
+            self.market_device_cookie_value = ''
             self.market_x_device_info = ''
             self.market_device_from_env = False
             self.market_device_is_placeholder = False
             self.market_headers = {}
             self.market_cookies = {}
+            self.red_packet_token = ''
+            self.red_packet_mobile = ''
             self.session = requests.Session()
             self.user_log_lines = []
 
@@ -483,25 +574,40 @@ class YP:
             self.Authorization = stored_token
 
     def load_or_create_market_device_profile(self):
-        """加载 deviceId；未配置环境变量且缓存为空时自动生成并保存"""
+        """加载 deviceId；默认优先使用页面设备指纹接口，失败后再回退到配置/缓存。"""
         ensure_account_storage_entry(self.account, self.Authorization)
+
+        fetched_id = fetch_device_id()
+        if fetched_id:
+            self.market_device_id = fetched_id
+            self.market_device_cookie_value = fetched_id
+            self.market_x_device_info = build_x_device_info(fetched_id)
+            self.market_device_from_env = False
+            self.market_device_is_placeholder = False
+            save_device_id(fetched_id, self.account)
+            return
 
         env_device_id = get_env_device_id()
         if env_device_id:
-            self.market_device_id = env_device_id
-            self.market_x_device_info = build_x_device_info(env_device_id)
+            device_id, cookie_value = normalize_market_device_input(env_device_id)
+            self.market_device_id = device_id
+            self.market_device_cookie_value = cookie_value
+            self.market_x_device_info = build_x_device_info(device_id)
             self.market_device_from_env = True
             self.market_device_is_placeholder = False
             return
 
         stored_device_id = get_device_id(self.account)
         if stored_device_id:
-            self.market_device_id = stored_device_id
-            self.market_x_device_info = build_x_device_info(stored_device_id)
+            device_id, cookie_value = normalize_market_device_input(stored_device_id)
+            self.market_device_id = device_id
+            self.market_device_cookie_value = cookie_value
+            self.market_x_device_info = build_x_device_info(device_id)
             self.market_device_is_placeholder = False
             return
 
         self.market_device_id = generate_device_id()
+        _, self.market_device_cookie_value = normalize_market_device_input(self.market_device_id)
         self.market_x_device_info = build_x_device_info(self.market_device_id)
         self.market_device_is_placeholder = False
         if self.market_device_id:
@@ -661,6 +767,7 @@ class YP:
             self.log(f'\n📧 139邮箱任务')
             self.get_tasklist(url = 'newsign_139mail', app_type = 'email_app')
             self.receive()
+            self.red_envelope_party()
             global all_logs
             user_log_str = "\n".join(self.user_log_lines)
             all_logs += f"用户【{self.encrypt_account}】日志:\n{user_log_str}\n\n"
@@ -723,6 +830,37 @@ class YP:
         return None
 
     @staticmethod
+    def is_signin_busy_error(data):
+        msg = str((data or {}).get('msg', ''))
+        return any(keyword in msg for keyword in ('活动太火爆', '锁定失败', '试试其他奖品'))
+
+    @staticmethod
+    def get_signin_busy_retry_config():
+        return 2, 8
+
+    def confirm_today_sign_state(self, check_url, headers=None):
+        latest_data = self.request_market_json(check_url, params = {'client': 'app'}, headers = headers)
+        return bool(latest_data and latest_data.get('code') == 0
+                    and self.get_today_sign_state(latest_data.get('result', {})))
+
+    def build_signin_params(self, info_data=None):
+        return {'client': 'app'}
+
+    def request_signin_action(self, endpoint, params=None, headers=None, label='签到接口', retries=2, info_data=None):
+        params = params or self.build_signin_params()
+        headers = headers or self.build_signin_headers()
+        base_url = self.market_base_url.rstrip('/')
+        path_url = f'/market/signin/page/{endpoint}'
+        url = f'{base_url}{path_url}'
+        data = self.request_json(url,
+                                 params = params,
+                                 method = 'GET',
+                                 headers = self.build_market_headers(headers),
+                                 cookies = dict(self.market_cookies),
+                                 retries = retries)
+        return data
+
+    @staticmethod
     def extract_user_domain_id(jwt_token):
         try:
             payload = jwt_token.split('.')[1]
@@ -738,7 +876,7 @@ class YP:
     def build_market_context(self, jwt_token):
         self.user_domain_id = self.extract_user_domain_id(jwt_token)
         self.market_headers = {
-            'User-Agent': market_ua,
+            'User-Agent': get_market_user_agent(),
             'Accept': '*/*',
             'jwtToken': jwt_token,
             'X-Requested-With': 'com.chinamobile.mcloud',
@@ -763,14 +901,19 @@ class YP:
         return ''
 
     def seed_market_device_cookie(self):
-        device_id = self.market_device_id
-        if not device_id:
+        cookie_value = self.market_device_cookie_value
+        if not cookie_value and self.market_device_id:
+            _, cookie_value = normalize_market_device_input(self.market_device_id)
+        if not cookie_value:
             return
-        cookie_value = device_id[1:] if self.market_device_from_env and device_id.startswith('B') else device_id
-        if any(cookie.name.startswith('.thumbcache_') and unquote(cookie.value) == cookie_value
+        normalized_cookie_value = unquote(cookie_value)
+        if any(cookie.name.startswith('.thumbcache_') and unquote(cookie.value) == normalized_cookie_value
                for cookie in self.session.cookies):
+            self.market_cookies[f'.thumbcache_{self.account}'] = cookie_value
             return
-        self.session.cookies.set(f'.thumbcache_{self.account}', cookie_value, domain='m.mcloud.139.com', path='/')
+        cookie_name = f'.thumbcache_{self.account}'
+        self.market_cookies[cookie_name] = cookie_value
+        self.session.cookies.set(cookie_name, cookie_value, domain='m.mcloud.139.com', path='/')
 
     def build_market_headers(self, extra_headers=None, referer=None):
         headers = dict(self.market_headers)
@@ -791,6 +934,9 @@ class YP:
             'activityId': 'sign_in_3',
         }, referer = self.build_market_page_url(source_id))
 
+    def build_signin_headers(self, source_id=None):
+        return self.build_market_headers(referer = self.build_market_page_url(source_id))
+
     def request_market_json(self, url, params=None, data=None, method='GET', debug=None, retries=5, headers=None,
                             cookies=None):
         request_cookies = dict(self.market_cookies)
@@ -802,11 +948,12 @@ class YP:
     def post_signin_journaling(self, keyword, source_id=None):
         current_source_id = source_id or self.market_source_id
         payload = f'module=uservisit&optkeyword={keyword}&sourceid={current_source_id}&marketName=sign_in_3'
+        page_url = self.build_market_page_url(current_source_id)
         response = self.send_request(f'{self.market_base_url}/ycloud/visitlog/journaling',
                                      headers = self.build_market_headers(
                                          {'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'},
-                                         referer = self.build_market_page_url(current_source_id)
-                                     ),
+                                         referer = page_url
+                                      ),
                                      cookies = self.market_cookies, data = payload, method = 'POST', retries = 1)
         return response is not None
 
@@ -830,6 +977,494 @@ class YP:
 
     def click_task(self, task_id, key='task'):
         return self.request_market_json(f'{self.market_base_url}/market/signin/task/click?key={key}&id={task_id}')
+
+    def build_red_packet_headers(self, token=''):
+        request_id = f'{datetime.now().strftime("%Y%m%d%H%M%S")}{current_millis()}{random_string(8)}'
+        timestamp = current_millis()
+        headers = {
+            'requestId': request_id,
+            'appId': RED_PACKET_APP_ID,
+            'token': token or '',
+        }
+        raw = ''.join(str(headers[key]) for key in headers if headers[key] is not None)
+        headers['sign'] = hashlib.md5(f'{raw}{RED_PACKET_SIGN_KEY}{timestamp}'.encode()).hexdigest()
+        headers['timestamp'] = str(timestamp)
+        headers.update({
+            'User-Agent': ua,
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json;charset=UTF-8',
+            'Origin': 'https://cpactiv.buy.139.com',
+            'Referer': RED_PACKET_PAGE_URL,
+            'x-origin': RED_PACKET_PAGE_URL,
+            'x-channelSrc': RED_PACKET_CHANNEL_SRC,
+            'x-DeviceInfo': self.build_red_packet_device_info(),
+        })
+        return headers
+
+    def build_red_packet_device_info(self):
+        screen = '390X844'
+        uuid_value = f'{current_millis()}{random_string(10)}'
+        return '|'.join(['wifi', 'h5', '1.0.0', 'v1.0.0', '', ua, uuid_value, '', '', screen, 'zh', '', ''])
+
+    def request_red_packet_json(self, path_url, data=None, token=None, debug=None, retries=5):
+        url = f'{RED_PACKET_BASE_URL}{path_url}'
+        return self.request_json(url, headers = self.build_red_packet_headers(token if token is not None else self.red_packet_token),
+                                 data = data or {}, method = 'POST', debug = debug, retries = retries)
+
+    def login_red_packet(self):
+        if self.red_packet_token:
+            return True
+        sso_token = self.query_spec_token(RED_PACKET_SOURCE_ID)
+        if not sso_token:
+            self.log('-红包派对登录失败: SSO token获取失败')
+            return False
+        login_data = self.request_red_packet_json('/user/tokenValidate', data = {
+            'version': '1.0',
+            'pintype': 13,
+            'token': sso_token,
+            'deviceId': '',
+            'loginConfig': '',
+        }, token = '')
+        if not login_data:
+            self.log('-红包派对登录失败: 接口无响应')
+            return False
+        header = login_data.get('header') or {}
+        result = login_data.get('data') or {}
+        if str(header.get('status')) == '200' and result.get('token'):
+            self.red_packet_token = result.get('token')
+            self.red_packet_mobile = result.get('account') or result.get('mobile') or result.get('phone') or self.account
+            return True
+        msg = header.get('errMsg') or header.get('respMsg') or result.get('errorMsg') or '未知错误'
+        self.log(f'-红包派对登录失败: {msg}')
+        return False
+
+    def get_red_packet_task_list(self):
+        return self.request_red_packet_json('/redpacket/configTaskLoginList', data = {'version': RED_PACKET_VERSION})
+
+    def get_red_packet_account_info(self):
+        return self.request_red_packet_json('/redpacket/userAccountInfo', data = {
+            'version': RED_PACKET_VERSION,
+            'platformType': 1,
+        })
+
+    def get_red_packet_toast_info(self, task_code=None):
+        data = {'version': RED_PACKET_VERSION}
+        if task_code:
+            data['configTaskCode'] = task_code
+        return self.request_red_packet_json('/redpacket/userToastInfo', data = data)
+
+    @staticmethod
+    def red_packet_status_text(status):
+        return {
+            0: '未完成',
+            1: '已完成',
+            3: '奖品已兑完',
+            4: '明天再来',
+        }.get(status, str(status))
+
+    @staticmethod
+    def get_red_packet_task_amount(task):
+        amount = task.get('prizeAmount')
+        if amount is None:
+            amount = task.get('taskAmount')
+        try:
+            return f'{float(amount) / 100:.2f}元' if amount is not None else ''
+        except (TypeError, ValueError):
+            return ''
+
+    def complete_red_packet_task(self, task):
+        return self.request_red_packet_json('/redpacket/userCompleteTask', data = {
+            'version': RED_PACKET_VERSION,
+            'platformType': 1,
+            'taskId': task.get('id'),
+        })
+
+    def browse_red_packet_task(self, task_code):
+        return self.request_red_packet_json('/redpacket/userBrowse', data = {
+            'taskCode': task_code,
+            'version': RED_PACKET_VERSION,
+        })
+
+    @staticmethod
+    def red_packet_data(data):
+        return (data or {}).get('data') or {}
+
+    def red_packet_error(self, data, default='未知错误'):
+        header = (data or {}).get('header') or {}
+        result = self.red_packet_data(data)
+        return result.get('errorMsg') or header.get('errMsg') or header.get('respMsg') or default
+
+    def is_red_packet_ok(self, data):
+        return bool(data) and str(((data or {}).get('header') or {}).get('status')) == '200'
+
+    def complete_red_packet_action(self, task):
+        task_name = task.get('taskName', '')
+        data = self.complete_red_packet_task(task)
+        if not data:
+            self.log(f'-红包派对任务失败: {task_name} 接口无响应')
+            return False
+        result = self.red_packet_data(data)
+        if result and result.get('status') not in (None, 1):
+            self.log(f"-红包派对任务失败: {task_name} {self.red_packet_error(data)}")
+            return False
+        return True
+
+    def user_sign_red_packet(self):
+        data = self.request_red_packet_json('/redpacket/userSign', data = {
+            'version': RED_PACKET_VERSION,
+            'platformType': 1,
+        })
+        if not data:
+            self.log('-红包派对签到失败: 接口无响应')
+            return False
+        result = self.red_packet_data(data)
+        if self.is_red_packet_ok(data) and result.get('status') == 1:
+            self.log('-已完成: 每日签到')
+            self.log_red_packet_reward('SIGN_1', '每日签到')
+            return True
+        self.log(f'-红包派对签到失败: {self.red_packet_error(data)}')
+        return False
+
+    def get_red_packet_today_sign(self, task_list=None):
+        if task_list is None:
+            data = self.get_red_packet_task_list()
+            if not self.is_red_packet_ok(data):
+                return None
+            task_list = self.red_packet_data(data)
+        for item in task_list.get('configTaskSignList') or []:
+            if item.get('isToday') == 1:
+                return item
+        return None
+
+    def get_red_packet_cloud_phones(self):
+        phones = []
+        for status in ('ACTIVE', 'PENDING'):
+            data = self.request_red_packet_json('/thirdapi/huawei/thirdQueryUserRelationshipV2', data = {
+                'pageNumber': 1,
+                'pageSize': 10,
+                'status': status,
+            })
+            body = self.red_packet_data(data)
+            nested = body.get('data') if isinstance(body, dict) else {}
+            detail = nested if isinstance(nested, dict) else body
+            phones.extend(detail.get('subscribeDetails') or [])
+        return phones
+
+    def get_red_packet_hw_token(self):
+        data = self.request_red_packet_json('/user/gethwToken', data = {'token': self.red_packet_token})
+        body = self.red_packet_data(data)
+        return body.get('hwToken') or ((body.get('data') or {}).get('hwToken') if isinstance(body, dict) else '')
+
+    def get_red_packet_rcs_token(self, target_source_id='0'):
+        data = self.request_red_packet_json('/user/getRcsToken', data = {
+            'token': self.red_packet_token,
+            'targetSourceId': target_source_id,
+        })
+        body = self.red_packet_data(data)
+        return body.get('token') or ''
+
+    def get_red_packet_app_list(self):
+        data = self.request_red_packet_json('/redpacket/configAppList', data = {'platformType': 1})
+        if not self.is_red_packet_ok(data):
+            return []
+        return self.red_packet_data(data).get('list') or []
+
+    def get_red_packet_install_status(self, hw_token, instance_id, package_name):
+        data = self.request_red_packet_json('/app/activity/instanceApkInstallStatus', data = {
+            'hwToken': hw_token,
+            'apkList': [package_name],
+            'instanceIdList': [instance_id],
+        })
+        body = self.red_packet_data(data)
+        items = body.get('data') if isinstance(body, dict) else body
+        if isinstance(items, dict):
+            items = items.get('list') or []
+        if not items:
+            return None
+        instance_list = (items[0] or {}).get('instanceList') or []
+        if not instance_list:
+            return None
+        return instance_list[0].get('installStatus')
+
+    def poll_red_packet_install_task(self, hw_token, task_id):
+        for _ in range(60):
+            data = self.request_red_packet_json('/app/activity/appInstallTaskStatus', data = {
+                'taskId': task_id,
+                'hwToken': hw_token,
+            })
+            body = self.red_packet_data(data)
+            status_data = body.get('data') if isinstance(body, dict) and isinstance(body.get('data'), dict) else body
+            status = (status_data or {}).get('taskStatus')
+            if status == 2:
+                return True
+            if status == 3:
+                return False
+            self.sleep(1, 1.2)
+        return False
+
+    def report_red_packet_install_app(self, task, app, existed=None):
+        data = {
+            'taskId': task.get('id'),
+            'appId': app.get('id'),
+            'version': RED_PACKET_VERSION,
+            'platformType': 1,
+        }
+        if existed is not None:
+            data['existed'] = existed
+        return self.request_red_packet_json('/redpacket/userInstallApp', data = data)
+
+    def install_red_packet_app(self, task):
+        if not self.complete_red_packet_action(task):
+            return False
+        phones = self.get_red_packet_cloud_phones()
+        if not phones:
+            self.log(f"-需手动完成: {task.get('taskName', '')} (无云手机)")
+            return False
+        phone = next((item for item in phones if ((item.get('subsProdInstances') or [{}])[0]).get('lockStatus') != 'Y'), phones[0])
+        instance_id = phone.get('instanceId')
+        if not instance_id or ((phone.get('subsProdInstances') or [{}])[0]).get('lockStatus') == 'Y':
+            self.log(f"-需手动完成: {task.get('taskName', '')} (云机锁屏)")
+            return False
+        apps = self.get_red_packet_app_list()
+        if not apps:
+            self.log(f"-红包派对任务失败: {task.get('taskName', '')} 应用列表为空")
+            return False
+        hw_token = self.get_red_packet_hw_token()
+        if not hw_token:
+            self.log(f"-红包派对任务失败: {task.get('taskName', '')} hwToken获取失败")
+            return False
+        for app in apps:
+            package_name = app.get('packageName')
+            if not package_name:
+                continue
+            if self.get_red_packet_install_status(hw_token, instance_id, package_name) == 2:
+                self.report_red_packet_install_app(task, app, existed = 1)
+                refreshed = self.refresh_red_packet_task(task.get('taskCode')) or {}
+                if refreshed.get('userStatus') == 1:
+                    self.log(f"-已完成: {task.get('taskName', '')}")
+                    self.log_red_packet_reward(task.get('taskCode'), task.get('taskName', ''))
+                    return True
+                continue
+            install_data = self.request_red_packet_json('/app/activity/apkInstall', data = {
+                'instanceId': instance_id,
+                'appId': app.get('packageId'),
+                'hwToken': hw_token,
+            })
+            body = self.red_packet_data(install_data)
+            install_result = body.get('data') if isinstance(body, dict) and isinstance(body.get('data'), dict) else body
+            if not (install_result or {}).get('success'):
+                continue
+            if self.poll_red_packet_install_task(hw_token, install_result.get('taskId')):
+                self.report_red_packet_install_app(task, app)
+                refreshed = self.refresh_red_packet_task(task.get('taskCode')) or {}
+                if refreshed.get('userStatus') == 1:
+                    self.log(f"-已完成: {task.get('taskName', '')}")
+                    self.log_red_packet_reward(task.get('taskCode'), task.get('taskName', ''))
+                    return True
+                self.log(f"-已安装应用: {app.get('apkName') or package_name}")
+                return True
+        self.log(f"-红包派对任务失败: {task.get('taskName', '')} 未找到可安装应用")
+        return False
+
+    def complete_red_packet_cloud_use(self, task):
+        if not self.complete_red_packet_action(task):
+            return False
+        phones = self.get_red_packet_cloud_phones()
+        if phones:
+            self.get_red_packet_rcs_token()
+        refreshed = self.refresh_red_packet_task(task.get('taskCode')) or {}
+        if refreshed.get('userStatus') == 1:
+            self.log(f"-已完成: {task.get('taskName', '')}")
+            self.log_red_packet_reward(task.get('taskCode'), task.get('taskName', ''))
+            return True
+        self.log(f"-需手动完成: {task.get('taskName', '')} (需云机内实际使用)")
+        return True
+
+    def get_red_packet_topic(self):
+        data = self.request_red_packet_json('/redpacket/configTopicList', data = {})
+        topics = self.red_packet_data(data).get('list') or []
+        return topics[0] if topics else None
+
+    def answer_red_packet_topic(self, task):
+        if not self.complete_red_packet_action(task):
+            return False
+        question = ''
+        for _ in range(15):
+            topic = self.get_red_packet_topic()
+            if not topic:
+                self.log(f"-红包派对任务失败: {task.get('taskName', '')} 题库为空")
+                return False
+            question = topic.get('topicContent', '')
+            answer_text = RED_PACKET_KNOWN_ANSWERS.get(question)
+            try:
+                options = json.loads(topic.get('topicOption') or '[]')
+            except (TypeError, ValueError):
+                options = []
+            if answer_text and answer_text in options:
+                break
+            self.sleep(0.1, 0.2)
+        else:
+            self.log(f'-需手动完成: {task.get("taskName", "")} (未知题目: {question})')
+            return False
+        answer = 'ABCD'[options.index(answer_text)]
+        data = self.request_red_packet_json('/redpacket/userTopicAnswer', data = {
+            'taskId': int(task.get('id')),
+            'topicId': int(topic.get('id')),
+            'answer': answer,
+            'version': RED_PACKET_VERSION,
+            'platformType': 1,
+        })
+        result = self.red_packet_data(data)
+        if self.is_red_packet_ok(data) and result.get('status') == 1:
+            self.log(f"-已完成: {task.get('taskName', '')}")
+            self.log_red_packet_reward(task.get('taskCode'), task.get('taskName', ''))
+            return True
+        self.log(f"-红包派对任务失败: {task.get('taskName', '')} {self.red_packet_error(data)}")
+        return False
+
+    def log_red_packet_reward(self, task_code, default_name=''):
+        data = self.get_red_packet_toast_info(task_code)
+        if not data or str((data.get('header') or {}).get('status')) != '200':
+            return
+        prize = (data.get('data') or {}).get('lastUserPrize') or {}
+        amount = prize.get('prizeAmount')
+        if amount:
+            try:
+                self.log(f"-红包派对奖励: {prize.get('prizeName') or default_name} +{float(amount) / 100:.2f}元")
+            except (TypeError, ValueError):
+                self.log(f"-红包派对奖励: {prize.get('prizeName') or default_name} +{amount}")
+
+    def refresh_red_packet_task(self, task_code):
+        data = self.get_red_packet_task_list()
+        if not data or str((data.get('header') or {}).get('status')) != '200':
+            return None
+        task_list = data.get('data') or {}
+        for group in ('configTaskNoviceList', 'configTaskDailyList', 'configTaskMonthlyList'):
+            for task in task_list.get(group) or []:
+                if task.get('taskCode') == task_code:
+                    return task
+        return None
+
+    def finish_red_packet_task(self, task, browse=False):
+        task_name = task.get('taskName', '')
+        task_code = task.get('taskCode', '')
+        complete_data = self.complete_red_packet_task(task)
+        if not complete_data:
+            self.log(f'-红包派对任务失败: {task_name} 接口无响应')
+            return False
+        result = complete_data.get('data') or {}
+        if result and result.get('status') not in (None, 1):
+            self.log(f"-红包派对任务失败: {task_name} {result.get('errorMsg', '未知错误')}")
+            return False
+        if browse:
+            self.sleep(15, 16)
+            browse_data = self.browse_red_packet_task(task_code)
+            if not browse_data or str((browse_data.get('header') or {}).get('status')) != '200':
+                msg = ((browse_data or {}).get('data') or {}).get('errorMsg') or '浏览确认失败'
+                self.log(f'-红包派对任务失败: {task_name} {msg}')
+                return False
+        refreshed = self.refresh_red_packet_task(task_code) or {}
+        status = refreshed.get('userStatus', task.get('userStatus'))
+        if status == 1:
+            self.log(f'-已完成: {task_name}')
+            self.log_red_packet_reward(task_code, task_name)
+            return True
+        self.log(f'-已登记: {task_name} ({self.red_packet_status_text(status)})')
+        return True
+
+    def log_red_packet_balance(self):
+        data = self.get_red_packet_account_info()
+        if not data or str((data.get('header') or {}).get('status')) != '200':
+            self.log('-红包派对余额查询失败')
+            return
+        info = (data.get('data') or {}).get('info') or {}
+        try:
+            can_amount = float(info.get('canAmount') or 0) / 100
+            total_amount = float(info.get('totalAmount') or 0) / 100
+            self.log(f'-红包派对余额: 可用{can_amount:.2f}元，累计{total_amount:.2f}元')
+        except (TypeError, ValueError):
+            self.log('-红包派对余额查询失败: 响应异常')
+
+    def handle_red_packet_task(self, task):
+        task_name = task.get('taskName', '')
+        task_code = task.get('taskCode', '')
+        status = int(task.get('userStatus') or 0)
+        amount = self.get_red_packet_task_amount(task)
+        suffix = f' ({amount})' if amount else ''
+        if status == 1:
+            self.log(f'-已完成: {task_name}{suffix}')
+            return
+        if status in (3, 4):
+            self.log(f'-暂不可做: {task_name} ({self.red_packet_status_text(status)})')
+            return
+        if task_code in RED_PACKET_BROWSE_TASKS:
+            self.log(f'-去完成: {task_name}{suffix}')
+            self.finish_red_packet_task(task, browse = True)
+            return
+        if task_code in RED_PACKET_DIRECT_TASKS:
+            self.log(f'-去完成: {task_name}{suffix}')
+            self.finish_red_packet_task(task)
+            return
+        if task_code == 'DAILY_1':
+            self.log(f'-去完成: {task_name}{suffix}')
+            self.complete_red_packet_cloud_use(task)
+            return
+        if task_code == 'MONTHLY_2':
+            self.log(f'-去完成: {task_name}{suffix}')
+            self.install_red_packet_app(task)
+            return
+        if task_code == 'MONTHLY_3':
+            self.log(f'-去完成: {task_name}{suffix}')
+            self.answer_red_packet_topic(task)
+            return
+        reason = RED_PACKET_MANUAL_TASKS.get(task_code, '未知任务')
+        self.log(f'-需手动完成: {task_name}{suffix} ({reason})')
+
+    def handle_red_packet_sign(self, task_list):
+        today = self.get_red_packet_today_sign(task_list)
+        if not today:
+            return
+        status = int(today.get('status') or 0)
+        amount = today.get('signAmount')
+        suffix = f' ({float(amount) / 100:.2f}元)' if amount else ''
+        if status == 1:
+            self.log(f'-已完成: 每日签到{suffix}')
+        elif status == 0:
+            self.log(f'-去完成: 每日签到{suffix}')
+            self.user_sign_red_packet()
+        else:
+            self.log(f'-暂不可做: 每日签到 ({self.red_packet_status_text(status)})')
+
+    def red_packet_task_groups(self):
+        return [
+            ('configTaskNoviceList', '\n🧧 红包派对新手任务'),
+            ('configTaskDailyList', '\n🧧 红包派对每日任务'),
+            ('configTaskMonthlyList', '\n🧧 红包派对每月任务'),
+        ]
+
+    def red_envelope_party(self):
+        self.log(f'\n🧧 红包派对任务')
+        if not self.login_red_packet():
+            return
+        data = self.get_red_packet_task_list()
+        if not data:
+            self.log('获取红包派对任务失败: 接口无响应')
+            return
+        header = data.get('header') or {}
+        if str(header.get('status')) != '200':
+            self.log(f"获取红包派对任务失败: {header.get('errMsg') or header.get('respMsg') or '未知错误'}")
+            return
+        task_list = data.get('data') or {}
+        self.log_red_packet_balance()
+        self.handle_red_packet_sign(task_list)
+        for group, title in self.red_packet_task_groups():
+            tasks = task_list.get(group) or []
+            if not tasks:
+                continue
+            self.log(title)
+            for task in tasks:
+                self.handle_red_packet_task(task)
+        self.log_red_packet_balance()
 
     def get_notice_status(self):
         send_data = self.request_json('https://caiyun.feixin.10086.cn/market/msgPushOn/task/status',
@@ -1549,7 +2184,7 @@ class YP:
         time.sleep(delay)
 
 
-    def sso(self):
+    def query_spec_token(self, source_id):
         sso_url = 'https://orches.yun.139.com/orchestration/auth-rebuild/token/v1.0/querySpecToken'
         sso_headers = {
             'Authorization': self.Authorization,
@@ -1558,17 +2193,22 @@ class YP:
             'Accept': '*/*',
             'Host': 'orches.yun.139.com'
         }
-        sso_payload = {"account": self.account, "toSourceId": "001005"}
+        sso_payload = {"account": self.account, "toSourceId": source_id}
         sso_data = self.request_json(sso_url, headers = sso_headers, data = sso_payload, method = 'POST')
         if not sso_data:
             self.log('刷新Token失败: 接口无响应')
             return None
-        if sso_data['success']:
-            refresh_token = sso_data['data']['token']
+        if sso_data.get('success'):
+            return sso_data.get('data', {}).get('token')
+        self.log(f"刷新Token失败: {sso_data.get('message', '未知错误')}")
+        return None
+
+    def sso(self):
+        refresh_token = self.query_spec_token('001005')
+        if refresh_token:
             self.sso_token = refresh_token
             return refresh_token
         else:
-            self.log(f"刷新Token失败: {sso_data.get('message', '未知错误')}")
             return None
 
     def jwt(self):
@@ -1612,8 +2252,10 @@ class YP:
     def signin_status(self):
         self.sleep()
         self.prepare_signin_center_session()
+        signin_headers = self.build_signin_headers()
+        signin_params = self.build_signin_params()
         check_url = f'{self.market_base_url}/market/signin/page/infoV3'
-        check_data = self.request_market_json(check_url, params = {'client': 'app'})
+        check_data = self.request_market_json(check_url, params = {'client': 'app'}, headers = signin_headers)
         if not check_data:
             self.log('查询签到失败: 接口无响应')
             return
@@ -1623,20 +2265,53 @@ class YP:
         if self.get_today_sign_state(check_data.get('result', {})):
             self.log('✅已签到')
             return
-        signin_data = self.request_market_json(f'{self.market_base_url}/market/signin/page/startSignIn',
-                                               params = {'client': 'app'})
+        signin_params = self.build_signin_params(check_data)
+        signin_data = self.request_signin_action('startSignIn',
+                                                 params = signin_params,
+                                                 headers = signin_headers,
+                                                 label = 'startSignIn',
+                                                 info_data = check_data)
         if not signin_data:
             self.log('签到失败: 接口无响应')
             return
         if signin_data.get('code') == 0 and self.get_today_sign_state(signin_data.get('result', {})):
             self.log('✅签到成功')
             return
-        latest_data = self.request_market_json(check_url, params = {'client': 'app'})
-        if latest_data and latest_data.get('code') == 0 and self.get_today_sign_state(latest_data.get('result', {})):
+        if self.confirm_today_sign_state(check_url, signin_headers):
             self.log('✅签到成功')
             return
-        self.log(f"签到失败: {signin_data.get('msg', '未知错误')}")
-        if signin_data.get('code') in (614, 615) and not get_env_device_id() and not get_device_id(self.account):
+        if self.is_signin_busy_error(signin_data):
+            retries, delay = self.get_signin_busy_retry_config()
+            for retry_idx in range(1, retries + 1):
+                wait_seconds = delay + random.randint(0, delay)
+                self.log(f'-签到锁定失败，{wait_seconds}秒后复查重试 {retry_idx}/{retries}')
+                time.sleep(wait_seconds)
+                self.prepare_signin_center_session()
+                signin_headers = self.build_signin_headers()
+                signin_params = self.build_signin_params(check_data)
+                if self.confirm_today_sign_state(check_url, signin_headers):
+                    self.log('✅签到成功')
+                    return
+                retry_data = self.request_signin_action('startSignIn',
+                                                        params = signin_params,
+                                                        headers = signin_headers,
+                                                        label = f'startSignIn重试{retry_idx}',
+                                                        retries = 2,
+                                                        info_data = check_data)
+                if not retry_data:
+                    continue
+                signin_data = retry_data
+                if signin_data and signin_data.get('code') == 0 and self.get_today_sign_state(signin_data.get('result', {})):
+                    self.log('✅签到成功')
+                    return
+                if self.confirm_today_sign_state(check_url, signin_headers):
+                    self.log('✅签到成功')
+                    return
+                if not self.is_signin_busy_error(signin_data):
+                    break
+        signin_msg = signin_data.get('msg', '未知错误') if isinstance(signin_data, dict) else '接口无响应'
+        self.log(f"签到失败: {signin_msg}")
+        if isinstance(signin_data, dict) and signin_data.get('code') in (614, 615) and not get_env_device_id() and not get_device_id(self.account):
             self.log('-当前账号在 ydyp_device_ids.json 中尚未填写 deviceId，请抓包后手动补充')
 
     def click(self):
@@ -1992,11 +2667,12 @@ class YP:
         total_amount = info_result.get('total', '')
         if pending_amount:
             receive_headers = self.build_receive_headers()
-            receive_cookies = dict(self.market_cookies)
-            receive_data = self.request_json(f'{self.market_base_url}/market/signin/page/receiveV2',
-                                             params = {'client': 'app'},
-                                             headers = receive_headers,
-                                             cookies = receive_cookies)
+            receive_data = self.request_signin_action('receiveV2',
+                                                      params = self.build_signin_params(info_data),
+                                                      headers = receive_headers,
+                                                      label = 'receiveV2',
+                                                      retries = 2,
+                                                      info_data = info_data)
             if not receive_data:
                 self.log('领取云朵失败: 接口无响应')
                 self.log(f'-当前待领取:{pending_amount}云朵')
